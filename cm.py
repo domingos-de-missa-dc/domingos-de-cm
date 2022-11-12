@@ -11,26 +11,23 @@ import asyncio
 import datetime
 
 import sqlite3
-from bs4 import BeautifulSoup
+import bs4
 import re
 
 class Log:
     """ A is an entity describing a new notification posted to the webhook"""
     # TODO define a parser for a Log in a different class 
-    def __init__(self, link, title, desc, date, author, category):
+    def __init__(self, link, title, desc, date, author):
         self.title = str(title.string)
         self.link = re.sub("\/\?.*", "", link)
-        desc = BeautifulSoup(desc.text, "lxml")
+        desc = bs4.BeautifulSoup(desc.text, "lxml")
         self.desc = desc.find("p").text
-        CLEAN = re.compile("\+.*")
-        date = re.sub(CLEAN, "", str(date.string))
-        self.date = date[:-4]
+        self.date = str(date.string)[:-4]
         self.author = str(author.string)
-        self.category = str(category.string)
 
 class Payload:
     """ Webhook JSON payload built from a Log """
-    def __new__(self, username, log, image):
+    def __new__(self, username: str, log: Log, image: bs4.element.Tag):
         return {
             "username": username,
             "content": "", 
@@ -57,7 +54,7 @@ def update_etag(etag: str, date: str) -> None:
     with open("etag.txt", "w+") as f:
         f.write(f"{etag}\n{date}")
 
-def init_db() -> tuple([sqlite3.Connection, sqlite3.Cursor]):
+def init_db() -> tuple[sqlite3.Connection, sqlite3.Cursor]:
     """ Establishes connection to DB and initializes logging Table if not yet initialized """
     conn = sqlite3.connect("bot.db")
     cursor = conn.cursor()
@@ -65,33 +62,33 @@ def init_db() -> tuple([sqlite3.Connection, sqlite3.Cursor]):
     conn.commit()
     return (conn, cursor)
 
-def parse(content: requests.models.Response.content) -> list[Log]:
+def parse(content: requests.Response.content) -> list[Log]:
     """ Parse the contents of XML file and return a list of built Logs """
-    soup = BeautifulSoup(content, "xml")
+    soup = bs4.BeautifulSoup(content, "xml")
 
     entries = []
     for item in soup.find_all("item"):
         for link in item.find("link"):
-            entries.append(Log(link, item.find("title"), item.find("description"), item.find("pubDate"), item.find("creator"), item.find("category")))
+            entries.append(Log(link, item.find("title"), item.find("description"), item.find("pubDate"), item.find("creator")))
 
     return entries
 
-def is_log_in_db(log, cursor):
+def is_log_in_db(log: Log, cursor: sqlite3.Cursor) -> bool:
     """ Check for Log in DB, INDEXED with link """
     cursor.execute("SELECT link FROM logs WHERE link=?;", (log.link,))
     return cursor.fetchall()
 
-async def register_to_db(logs, conn, cursor):
+async def register_to_db(logs: list[Log], conn: sqlite3.Connection, cursor: sqlite3.Connection) -> None:
     """ Registers new Log to DB """
     for e in logs:
         cursor.execute("INSERT INTO logs VALUES(?, ?, ?, ?)", (e.link, e.title, datetime.date.today(), datetime.datetime.now().strftime("%H:%M:%S")))
     conn.commit()
 
-async def post_to_hooks(url, log, session):
+async def post_to_hooks(url: str, log: Log, session: aiohttp.ClientSession) -> None:
 
     # try and fetch image with alt corresponding to the title
     r = await session.get(log.link)
-    page_html = BeautifulSoup(await r.text(), "lxml")
+    page_html = bs4.BeautifulSoup(await r.text(), "lxml")
     img = page_html.find(attrs={"alt": log.title})
 
     # build payload
